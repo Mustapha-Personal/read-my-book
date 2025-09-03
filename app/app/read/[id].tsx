@@ -1,436 +1,441 @@
-import Spinner from "@/components/Spinner";
-import { Ionicons } from "@expo/vector-icons";
-import Slider from "@react-native-community/slider";
-import { useFocusEffect } from "@react-navigation/native";
-import * as Speech from "expo-speech";
-import { VoiceQuality } from "expo-speech";
-import React, { useEffect, useRef, useState } from "react";
-import { router, useLocalSearchParams } from "expo-router";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useBook } from "@/hooks/useBook";
+import { useUserSettings } from "@/hooks/useSettings";
+import { Link, router, useLocalSearchParams } from "expo-router";
 import {
-  KeyboardAvoidingView,
+  SafeAreaView,
+  StatusBar,
   Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  ScrollView,
+  StyleSheet,
 } from "react-native";
-import DropDownPicker from "react-native-dropdown-picker";
-import { useBook } from "@/hooks/useBook";
-import { useProfile } from "@/hooks/useSettings";
+import * as Speech from "expo-speech";
+import { Ionicons } from "@expo/vector-icons";
 
-const loadingMessages = [
-  "Loading book content...",
-  "Decoding book...",
-  "Getting ready to speak...",
-  "Finding the perfect voice...",
-];
+// AUTOMATED EXPO-SPEECH HOOK
+const useAutomatedExpoSpeech = (sentences, profile) => {
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
-export default function ReadBook() {
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [rate, setRate] = useState(1);
-  const [pitch, setPitch] = useState(1);
-  const [voices, setVoices] = useState<Speech.Voice[]>([]);
-  const [loadingAudio, setLoadingAudio] = useState(false);
-  const [messageIndex, setMessageIndex] = useState(0);
-  const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
+  const currentSessionRef = useRef(0);
 
+  // AUTOMATIC sentence-by-sentence playback (no manual batching!)
+  const playSentence = (index, sessionId) => {
+    if (sessionId !== currentSessionRef.current) return;
+    if (index >= sentences.length) {
+      // Reading complete
+      setIsPlaying(false);
+      setCurrentSentenceIndex(0);
+      return;
+    }
+
+    const sentence = sentences[index];
+    setCurrentSentenceIndex(index);
+    setIsPlaying(true);
+    setIsPaused(false);
+
+    Speech.speak(sentence, {
+      rate: profile?.rate || 1.0,
+      pitch: profile?.pitch || 1.0,
+      voice: profile?.voice || undefined,
+      language: profile?.language || "en-US",
+      quality: Speech.VoiceQuality.Enhanced,
+
+      onStart: () => {
+        console.log(`🎯 Auto-playing sentence ${index + 1}`);
+      },
+
+      // AUTOMATIC progression - no manual timing needed!
+      onDone: () => {
+        if (sessionId === currentSessionRef.current) {
+          // Auto-advance to next sentence with smart delay
+          const delay = sentence.match(/[!?]/) ? 400 : 200;
+          setTimeout(() => playSentence(index + 1, sessionId), delay);
+        }
+      },
+
+      onError: (error) => {
+        console.error(`Error on sentence ${index}:`, error);
+        // Auto-skip to next sentence on error
+        if (sessionId === currentSessionRef.current) {
+          setTimeout(() => playSentence(index + 1, sessionId), 500);
+        }
+      },
+    });
+  };
+
+  const startReading = (fromIndex = 0) => {
+    Speech.stop();
+    currentSessionRef.current += 1;
+    const sessionId = currentSessionRef.current;
+
+    setTimeout(() => playSentence(fromIndex, sessionId), 100);
+  };
+
+  const pauseReading = () => {
+    Speech.stop();
+    setIsPlaying(false);
+    setIsPaused(true);
+    currentSessionRef.current += 1;
+  };
+
+  const resumeReading = () => {
+    startReading(currentSentenceIndex);
+  };
+
+  const stopReading = () => {
+    Speech.stop();
+    setIsPlaying(false);
+    setIsPaused(false);
+    setCurrentSentenceIndex(0);
+    currentSessionRef.current += 1;
+  };
+
+  const jumpToSentence = (targetIndex) => {
+    Speech.stop();
+    setCurrentSentenceIndex(targetIndex);
+    if (isPlaying || isPaused) {
+      startReading(targetIndex);
+    }
+  };
+
+  return {
+    currentSentenceIndex,
+    isPlaying,
+    isPaused,
+    startReading,
+    pauseReading,
+    resumeReading,
+    stopReading,
+    jumpToSentence,
+  };
+};
+
+export default function AutomatedReadBook() {
   const { id } = useLocalSearchParams();
   const bookId = parseInt(id as string);
-
   const { data: book } = useBook(bookId);
-  const { data: profile } = useProfile();
-
-  // Save book text in a variable
-  const bookText = book?.text || "";
+  const { data: profile } = useUserSettings();
 
   const scrollRef = useRef<ScrollView>(null);
 
-  const textChunks = bookText
-    .split(/(?<=[.?!])\s+/)
-    .filter((chunk) => chunk.trim().length > 0);
+  // IMPROVED: Better sentence splitting that handles abbreviations and line breaks
+  const sentences = useMemo(() => {
+    if (!book?.text) return [];
 
-  const [langOpen, setLangOpen] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
-  const [languageItems, setLanguageItems] = useState<any[]>([]);
+    // First, clean up the text to handle line breaks and multiple spaces
+    const cleanedText =
+      "Read My Book App by Ogunkunle Fatima, now enjoy your reading. " +
+      book.text
+        .replace(/\n+/g, " ") // Replace line breaks with spaces
+        .replace(/\s+/g, " ") // Replace multiple spaces with single space
+        .trim();
 
-  const [voiceOpen, setVoiceOpen] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState<string | null>(null);
-  const [voiceItems, setVoiceItems] = useState<any[]>([]);
+    // Smart sentence splitting that combines short fragments
+    let rawSentences = cleanedText
+      .split(/(?<=[.!?])\s+(?=[A-Z])/) // Split only before capital letters
+      .map((s) => s.trim())
+      .filter((s) => s.length > 5);
 
-  useEffect(() => {
-    const loadVoices = async () => {
-      const availableVoices = await Speech.getAvailableVoicesAsync();
+    // Combine very short sentences with the next one for better flow
+    const improvedSentences = [];
+    let currentSentence = "";
 
-      // Use user's settings if available
-      if (profile?.pitch) setPitch(profile.pitch);
-      if (profile?.rate) setRate(profile.rate);
+    for (let i = 0; i < rawSentences.length; i++) {
+      const sentence = rawSentences[i];
 
-      setVoices(availableVoices);
-
-      const languages = Array.from(
-        new Set(availableVoices.map((v) => v.language))
-      );
-      setLanguageItems(languages.map((lang) => ({ label: lang, value: lang })));
-
-      const defaultLang =
-        profile?.language ||
-        languages.find((l) => l.startsWith("en")) ||
-        languages[0];
-      setSelectedLanguage(defaultLang);
-
-      // Try to use user's preferred voice if available
-      if (
-        profile?.voice &&
-        availableVoices.find((v) => v.identifier === profile.voice)
-      ) {
-        setSelectedVoice(profile.voice);
+      // If current sentence is too short (likely a fragment), combine with next
+      if (sentence.length < 50 && i < rawSentences.length - 1) {
+        currentSentence += sentence + " ";
       } else {
-        const fastVoice = availableVoices.find(
-          (v) =>
-            v.quality === VoiceQuality.Enhanced || v.language?.startsWith("en")
-        );
-        setSelectedVoice(
-          fastVoice?.identifier || availableVoices[0]?.identifier
-        );
+        currentSentence += sentence;
+        if (currentSentence.trim().length > 10) {
+          improvedSentences.push(currentSentence.trim());
+        }
+        currentSentence = "";
       }
-    };
-
-    loadVoices();
-  }, [profile]);
-
-  useEffect(() => {
-    if (!selectedLanguage) return;
-    const filtered = voices.filter((v) => v.language === selectedLanguage);
-    const voiceOptions = filtered.map((v) => ({
-      label: v.name,
-      value: v.identifier,
-    }));
-    setVoiceItems(voiceOptions);
-
-    // Only set default if not already set from user preferences
-    if (!selectedVoice) {
-      setSelectedVoice(filtered[0]?.identifier || null);
     }
-  }, [selectedLanguage, voices]);
 
+    // Add any remaining sentence
+    if (currentSentence.trim().length > 10) {
+      improvedSentences.push(currentSentence.trim());
+    }
+
+    return improvedSentences;
+  }, [book?.text]);
+
+  // REPLACE your entire complex system with this simple hook
+  const {
+    currentSentenceIndex,
+    isPlaying,
+    isPaused,
+    startReading,
+    pauseReading,
+    resumeReading,
+    stopReading,
+    jumpToSentence,
+  } = useAutomatedExpoSpeech(sentences, profile);
+
+  // FIXED: Auto-scroll with proper native component handling
   useEffect(() => {
-    if (!loadingAudio) return;
-    const interval = setInterval(() => {
-      setMessageIndex((prev) => (prev + 1) % loadingMessages.length);
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [loadingAudio]);
+    if (currentSentenceIndex >= 0 && sentences.length > 0) {
+      // Use a more reliable scrolling approach
+      setTimeout(() => {
+        const estimatedOffset = currentSentenceIndex * 80; // Estimate based on sentence height
+        const targetY = Math.max(0, estimatedOffset - 150); // Keep some context above
 
-  useFocusEffect(
-    React.useCallback(() => {
-      return () => {
-        Speech.stop();
-        setIsSpeaking(false);
-        setPaused(false);
-        setCurrentChunkIndex(0);
-        setShowSettings(false);
-      };
-    }, [])
-  );
+        scrollRef.current?.scrollTo({
+          y: targetY,
+          animated: true,
+        });
+      }, 100); // Small delay to ensure component is rendered
+    }
+  }, [currentSentenceIndex, sentences.length]);
 
-  const speakFromIndex = (index: number) => {
-    setLoadingAudio(false);
-    setIsSpeaking(true);
-    setPaused(false);
-    setShowSettings(false);
-    setCurrentChunkIndex(index);
-
-    const speakNextChunk = (i: number) => {
-      if (i >= textChunks.length) {
-        setIsSpeaking(false);
-        setPaused(false);
-        return;
-      }
-
-      setCurrentChunkIndex(i);
-      scrollRef.current?.scrollTo({ y: i * 60, animated: true });
-
-      Speech.speak(textChunks[i], {
-        rate,
-        pitch,
-        voice: selectedVoice || undefined,
-        onDone: () => {
-          if (!paused) speakNextChunk(i + 1);
-        },
-      });
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      Speech.stop();
     };
-
-    speakNextChunk(index);
-  };
-
-  const speak = () => {
-    setLoadingAudio(true);
-    setTimeout(() => speakFromIndex(0), 2000);
-  };
-
-  const pause = () => {
-    Speech.pause();
-    setPaused(true);
-    setIsSpeaking(false);
-  };
-
-  const resume = () => {
-    speakFromIndex(currentChunkIndex);
-  };
-
-  const stop = () => {
-    Speech.stop();
-    setPaused(false);
-    setIsSpeaking(false);
-    setCurrentChunkIndex(0);
-  };
-
-  const toggleSettings = () => {
-    setShowSettings(!showSettings);
-  };
-
-  const isPlaying = isSpeaking && !paused;
-  const isStopped = !isSpeaking && !paused;
+  }, []);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={styles.safe}
-    >
-      <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+
+      <View style={styles.content}>
+        {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color="#007bff" />
-          </Pressable>
-          <Text style={styles.title}>📚 Read My Book</Text>
-          <View style={styles.spacer} />
+          <Link href={"/(auth)/tabs/history"} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="black" />
+          </Link>
+          <Text style={styles.headerTitle}>{book?.title}</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
-        <View style={styles.contentArea}>
-          {/* Always show progress and text when not in settings mode */}
-          {!showSettings && (
-            <>
-              <Text style={styles.label}>
-                Progress: {currentChunkIndex + 1} / {textChunks.length}
-              </Text>
-              <ScrollView style={styles.textScroll} ref={scrollRef}>
-                {textChunks.map((chunk, index) => (
-                  <Text
-                    key={index}
-                    style={[
-                      styles.chunkText,
-                      index === currentChunkIndex && styles.highlight,
-                    ]}
-                  >
-                    {chunk}
-                  </Text>
-                ))}
-              </ScrollView>
-            </>
-          )}
-
-          {/* Show settings only when settings button is clicked */}
-          {showSettings && (
-            <>
-              <Text style={styles.label}>Select Language:</Text>
-              <DropDownPicker
-                open={langOpen}
-                value={selectedLanguage}
-                items={languageItems}
-                setOpen={setLangOpen}
-                setValue={setSelectedLanguage}
-                setItems={setLanguageItems}
-                placeholder="Select language"
-                searchable
-                style={styles.dropdown}
-                dropDownContainerStyle={styles.dropdownContainer}
-                zIndex={3000}
-                zIndexInverse={1000}
-              />
-
-              <Text style={styles.label}>Select Voice:</Text>
-              <DropDownPicker
-                open={voiceOpen}
-                value={selectedVoice}
-                items={voiceItems}
-                setOpen={setVoiceOpen}
-                setValue={setSelectedVoice}
-                setItems={setVoiceItems}
-                placeholder="Select voice"
-                searchable
-                style={styles.dropdown}
-                dropDownContainerStyle={styles.dropdownContainer}
-                zIndex={2000}
-                zIndexInverse={2000}
-              />
-
-              <Text style={styles.label}>Rate: {rate.toFixed(1)}</Text>
-              <Slider
-                minimumValue={0.5}
-                maximumValue={2}
-                value={rate}
-                onValueChange={(val) => setRate(val)}
-                step={0.1}
-              />
-
-              <Text style={styles.label}>Pitch: {pitch.toFixed(1)}</Text>
-              <Slider
-                minimumValue={0.5}
-                maximumValue={2}
-                value={pitch}
-                onValueChange={(val) => setPitch(val)}
-                step={0.1}
-              />
-            </>
-          )}
-
-          {loadingAudio && (
-            <View style={styles.feedback}>
-              <Spinner size="large" variant="primary" />
-              <Text style={styles.feedbackText}>
-                {loadingMessages[messageIndex]}
-              </Text>
-            </View>
-          )}
+        {/* Progress */}
+        <View style={styles.progressCard}>
+          <Text style={styles.progressText}>
+            📖 {currentSentenceIndex + 1} / {sentences.length} (
+            {Math.round(((currentSentenceIndex + 1) / sentences.length) * 100)}
+            %)
+          </Text>
+          <Text style={styles.progressSubtext}>
+            👆 Tap any sentence to jump there
+          </Text>
         </View>
 
-        <View style={styles.buttonRow}>
-          {/* Playing state */}
+        {/* Auto-scrolling text */}
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={true}
+        >
+          {sentences.map((sentence, index) => (
+            <TouchableOpacity
+              key={index}
+              onPress={() => jumpToSentence(index)}
+              activeOpacity={0.7}
+              style={[
+                styles.sentenceContainer,
+                index === currentSentenceIndex && styles.currentSentence,
+              ]}
+            >
+              <Text style={styles.sentenceNumber}>{index + 1}.</Text>
+              <Text
+                style={[
+                  styles.sentenceText,
+                  index === currentSentenceIndex && styles.currentSentenceText,
+                ]}
+              >
+                {sentence}
+              </Text>
+              {index === currentSentenceIndex && isPlaying && (
+                <Text style={styles.speakerIcon}>🔊</Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Controls */}
+        <View style={styles.controls}>
+          {!isPlaying && !isPaused && (
+            <TouchableOpacity
+              style={[styles.controlButton, styles.startButton]}
+              onPress={() => startReading(0)}
+            >
+              <Text style={styles.controlButtonText}>Start Listening</Text>
+            </TouchableOpacity>
+          )}
+
           {isPlaying && (
             <>
-              <TouchableOpacity style={styles.actionBtn} onPress={pause}>
-                <Text style={styles.btnText}>⏸ Pause</Text>
+              <TouchableOpacity
+                style={[styles.controlButton, styles.pauseButton]}
+                onPress={pauseReading}
+              >
+                <Text style={styles.controlButtonText}>⏸️ Pause</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionBtn]} onPress={stop}>
-                <Text style={styles.btnText}>⏹ Stop</Text>
+
+              <TouchableOpacity
+                style={[styles.controlButton, styles.stopButton]}
+                onPress={stopReading}
+              >
+                <Text style={styles.controlButtonText}>⏹️ Stop</Text>
               </TouchableOpacity>
             </>
           )}
 
-          {/* Paused state */}
-          {paused && (
-            <>
-              <TouchableOpacity style={styles.actionBtn} onPress={resume}>
-                <Text style={styles.btnText}>▶️ Resume</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.settingsBtn]}
-                onPress={toggleSettings}
-              >
-                <Text style={styles.btnText}>⚙️ Settings</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Stopped state */}
-          {isStopped && (
-            <>
-              <TouchableOpacity style={styles.actionBtn} onPress={speak}>
-                <Text style={styles.btnText}>🔊 Play</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.settingsBtn]}
-                onPress={toggleSettings}
-              >
-                <Text style={styles.btnText}>⚙️ Settings</Text>
-              </TouchableOpacity>
-            </>
+          {isPaused && (
+            <TouchableOpacity
+              style={[styles.controlButton, styles.resumeButton]}
+              onPress={resumeReading}
+            >
+              <Text style={styles.controlButtonText}>▶️ Resume</Text>
+            </TouchableOpacity>
           )}
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { flex: 1, padding: 24, backgroundColor: "#f2f2f2" },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 20,
-    textAlign: "center",
+  container: {
+    flex: 1,
+    backgroundColor: "#f8f9fa",
   },
-  contentArea: { flex: 0.9 },
-  buttonRow: {
-    flex: 0.1,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 12,
-  },
-  dropdown: {
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    marginBottom: 16,
-  },
-  dropdownContainer: {
-    backgroundColor: "#fff",
-    borderColor: "#ccc",
-  },
-  actionBtn: {
-    backgroundColor: "#111",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    minWidth: 100,
-    alignItems: "center",
-  },
-  secondaryBtn: {
-    backgroundColor: "#666",
-  },
-  settingsBtn: {
-    backgroundColor: "#222222",
-  },
-  btnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  feedback: {
-    alignItems: "center",
-    marginTop: 20,
-  },
-  feedbackText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: "#555",
-    fontWeight: "500",
-  },
-  chunkText: {
-    fontSize: 14,
-    marginBottom: 10,
-    color: "#333",
-    lineHeight: 20,
-  },
-  highlight: {
-    backgroundColor: "#fffae6",
-    fontWeight: "bold",
-  },
-  textScroll: {
-    flexGrow: 1,
-    paddingBottom: 16,
+  content: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0,
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 32,
-    marginTop: 20,
-  },
-  spacer: {
-    width: 40,
+    marginBottom: 20,
+    paddingVertical: 10,
   },
   backButton: {
     padding: 8,
-    borderRadius: 20,
   },
-  label: { fontSize: 16, fontWeight: "600", marginVertical: 8 },
+  backText: {
+    fontSize: 18,
+    color: "#007bff",
+    fontWeight: "500",
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  headerSpacer: {
+    width: 50,
+  },
+  progressCard: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  progressText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  progressSubtext: {
+    color: "#666",
+    marginTop: 4,
+    fontSize: 14,
+  },
+  scrollView: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  scrollContent: {
+    paddingBottom: 20,
+  },
+  sentenceContainer: {
+    flexDirection: "row",
+    padding: 12,
+    marginBottom: 8,
+    borderRadius: 8,
+    backgroundColor: "#f8f9fa",
+    alignItems: "flex-start",
+  },
+  currentSentence: {
+    backgroundColor: "#fff3cd",
+    borderLeftWidth: 4,
+    borderLeftColor: "#ffc107",
+  },
+  sentenceNumber: {
+    color: "#999",
+    marginRight: 8,
+    minWidth: 30,
+    fontSize: 14,
+  },
+  sentenceText: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 24,
+    color: "#333",
+  },
+  currentSentenceText: {
+    fontWeight: "bold",
+    color: "#856404",
+  },
+  speakerIcon: {
+    marginLeft: 8,
+    fontSize: 16,
+  },
+  controls: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingBottom: Platform.OS === "android" ? 30 : 20,
+    gap: 16,
+    backgroundColor: "#f8f9fa",
+  },
+  controlButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    minWidth: 100,
+    alignItems: "center",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  startButton: {
+    backgroundColor: "#28a745",
+  },
+  pauseButton: {
+    backgroundColor: "#ffc107",
+  },
+  stopButton: {
+    backgroundColor: "#dc3545",
+  },
+  resumeButton: {
+    backgroundColor: "#28a745",
+  },
+  controlButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
 });

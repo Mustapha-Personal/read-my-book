@@ -13,7 +13,10 @@ export default function BookCard({ book }: BookCardProps) {
   const [isFavourite, setIsFavourite] = useState(book.is_favourite);
   const toggleFavouriteMutation = useToggleFavourite();
 
-  const handleToggleFavourite = async () => {
+  const handleToggleFavourite = async (event: any) => {
+    // Prevent the card's onPress from firing
+    event.stopPropagation();
+
     try {
       setIsFavourite(!isFavourite);
       await toggleFavouriteMutation.mutateAsync(book.id);
@@ -22,38 +25,38 @@ export default function BookCard({ book }: BookCardProps) {
       console.log("Failed to toggle favourite:", error);
     }
   };
+
   return (
-    <View style={styles.card}>
-      <View style={styles.info}>
-        <View style={styles.header}>
-          <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-            {book.title}
-          </Text>
-          <Pressable
-            onPress={handleToggleFavourite}
-            style={styles.favouriteButton}
-          >
-            <Text style={[styles.star, isFavourite && styles.favouriteStar]}>
-              {isFavourite ? "★" : "☆"}
+    <Link href={`/read/${book.id}`} asChild>
+      <Pressable style={styles.card}>
+        <View style={styles.info}>
+          <View style={styles.header}>
+            <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+              {book.title}
             </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.footer}>
-          {book.last_read_at && (
-            <Text style={styles.lastRead}>
-              Last read: {formatDate(book.last_read_at)}
-            </Text>
-          )}
-
-          <Link href={`/read/${book.id}`} asChild>
-            <Pressable style={styles.readButton}>
-              <Text style={styles.readLink}>Read Now →</Text>
+            <Pressable
+              onPress={handleToggleFavourite}
+              style={styles.favouriteButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={[styles.star, isFavourite && styles.favouriteStar]}>
+                {isFavourite ? "★" : "☆"}
+              </Text>
             </Pressable>
-          </Link>
+          </View>
+
+          <View style={styles.footer}>
+            {book.last_read_at && (
+              <Text style={styles.lastRead}>
+                Last read: {formatDate(book.last_read_at)}
+              </Text>
+            )}
+
+            <Text style={styles.readLink}>Read Now</Text>
+          </View>
         </View>
-      </View>
-    </View>
+      </Pressable>
+    </Link>
   );
 }
 

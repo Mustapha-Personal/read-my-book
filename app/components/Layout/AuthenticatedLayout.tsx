@@ -1,17 +1,20 @@
 import { ReactNode } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, Text } from "react-native";
 import Header from "./Header";
 
 type Props = {
-  title: string;
-  children: ReactNode;
+  title?: string;
+  children?: ReactNode;
 };
 
 export default function AuthenticatedLayout({ title, children }: Props) {
+  const renderChildren =
+    typeof children === "string" ? <Text>{children}</Text> : children;
+
   return (
     <View style={styles.container}>
       <Header title={title ?? ""} />
-      <View style={styles.content}>{children}</View>
+      <View style={styles.content}>{renderChildren}</View>
     </View>
   );
 }

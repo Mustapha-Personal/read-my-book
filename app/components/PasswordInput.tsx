@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import {
+  // Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -24,7 +25,12 @@ export default function PasswordInput({ label, ...rest }: PasswordInputProps) {
         <TextInput
           {...rest}
           secureTextEntry={!showPassword}
+          autoCorrect={false}
+          autoCapitalize="none"
           style={styles.input}
+
+          // textContentType="password"
+          // keyboardType={Platform.OS === "ios" ? "default" : "visible-password"}
         />
         <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
           <Ionicons
@@ -54,5 +60,6 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 50,
     fontSize: 16,
+    color: "#111",
   },
 });

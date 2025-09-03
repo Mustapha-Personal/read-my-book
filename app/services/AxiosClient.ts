@@ -3,7 +3,7 @@ import { getToken } from "@/utils/auth";
 import axios from "axios";
 
 const AxiosClient = axios.create({
-  baseURL: "http://localhost:8002/api",
+  baseURL: "https://xeric-ceil-wakawala-8721ed38.koyeb.app/public/api",
 });
 
 // Request interceptor to add the auth token

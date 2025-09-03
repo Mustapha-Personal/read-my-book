@@ -11,21 +11,18 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [validationError, setValidationError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
 
-  const loginMutation = useLogin();
-  const { mutate: login, error } = loginMutation;
+  const { mutate: login, error, isPending } = useLogin();
 
   const handleLogin = () => {
     setValidationError("");
-    setIsLoading(true);
 
+    // Validation
     if (!email || !password) {
       setValidationError("All fields are required");
       return;
     }
 
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setValidationError("Please enter a valid email address");
@@ -35,7 +32,7 @@ export default function Login() {
     login(
       { email, password },
       {
-        onSuccess: async (data) => {
+        onSuccess: async () => {
           try {
             router.replace("/(auth)/tabs/home");
           } catch (error) {
@@ -47,8 +44,6 @@ export default function Login() {
         },
       }
     );
-
-    setIsLoading(false);
   };
 
   const displayError =
@@ -67,7 +62,7 @@ export default function Login() {
         placeholder="Email"
         autoCapitalize="none"
         keyboardType="email-address"
-        editable={!isLoading}
+        editable={!isPending}
       />
 
       <PasswordInput
@@ -75,13 +70,13 @@ export default function Login() {
         value={password}
         onChangeText={setPassword}
         placeholder="Password"
-        editable={!isLoading}
+        editable={!isPending}
       />
 
       <Button
-        label={isLoading ? "Please wait..." : "Login"}
+        label={isPending ? "Please wait..." : "Login"}
         onPress={handleLogin}
-        disabled={isLoading}
+        disabled={isPending}
       />
 
       <Text style={styles.footerText}>

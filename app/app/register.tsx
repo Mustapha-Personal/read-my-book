@@ -13,17 +13,13 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState("");
   const { login } = useAuth();
 
-  const registerMutation = useRegister();
-  const { mutate: register, error } = registerMutation;
+  const { mutate: register, error, isPending } = useRegister();
 
   const handleRegister = () => {
-    // Clear previous errors
     setValidationError("");
-    setIsLoading(true);
 
     // Validation
     if (!name || !email || !password) {
@@ -36,7 +32,6 @@ export default function Register() {
       return;
     }
 
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setValidationError("Please enter a valid email address");
@@ -49,8 +44,6 @@ export default function Register() {
       {
         onSuccess: async (data) => {
           try {
-            console.log("Registration successful:", data);
-
             const { user, token } = data.data || data;
 
             if (token && user) {
@@ -72,8 +65,6 @@ export default function Register() {
         },
       }
     );
-
-    setIsLoading(false);
   };
 
   // Combine API errors with validation errors
@@ -90,7 +81,7 @@ export default function Register() {
         value={name}
         onChangeText={setName}
         placeholder="Full Name"
-        editable={!isLoading}
+        editable={!isPending}
       />
 
       <Input
@@ -100,7 +91,7 @@ export default function Register() {
         placeholder="Email"
         autoCapitalize="none"
         keyboardType="email-address"
-        editable={!isLoading}
+        editable={!isPending}
       />
 
       <PasswordInput
@@ -108,13 +99,13 @@ export default function Register() {
         value={password}
         onChangeText={setPassword}
         placeholder="Password"
-        editable={!isLoading}
+        editable={!isPending}
       />
 
       <Button
-        label={isLoading ? "Please wait..." : "Register"}
+        label={isPending ? "Please wait..." : "Register"}
         onPress={handleRegister}
-        disabled={isLoading}
+        disabled={isPending}
       />
 
       <Text style={styles.footerText}>
